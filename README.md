@@ -3,6 +3,12 @@
 
 A personal AI assistant built with React, Vite, Express.js, and Google Gemini API. Features secure multi-user support with Supabase backend, vector search, and comprehensive memory management.
 
+<div align="center">
+  <img src="images/jarvis.jpg" alt="JARVIS" />
+</div>
+
+![JARVIS UI](images/jarvis-ui.jpg)
+
 ## 🏗️ Architecture
 
 - **Frontend**: React + Vite (port 3000)
