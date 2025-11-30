@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { searchMemories, vectorSearchMemories } from '../services/db';
+import { searchMemories, vectorSearchMemories } from '../services/supabase-db';
 import { Memory } from '../types';
 import { Search, X, Loader, Hash, Database, Clock } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { JarvisService } from '../services/gemini';
+import { hasApiKey } from '../services/api-client';
+import ApiKeyPrompt from './ApiKeyPrompt';
 
 interface SearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   service: JarvisService;
   onSelectMemory?: (memory: Memory) => void;
+  onNavigateToSettings?: () => void;
 }
 
-const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, service, onSelectMemory }) => {
+const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, service, onSelectMemory, onNavigateToSettings }) => {
   const { theme, getThemeClasses } = useTheme();
   const themeClasses = getThemeClasses();
   const [query, setQuery] = useState('');
@@ -20,6 +23,8 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, service, onS
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [showApiKeyPrompt, setShowApiKeyPrompt] = useState(false);
+  const serviceRef = useRef(service);
 
   // Get theme color for glows
   const getThemeColor = (opacity: number = 1) => {
@@ -40,6 +45,11 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, service, onS
     };
     return colorMap[theme.primary.split('-')[0]] || colorMap.indigo;
   };
+
+  // Keep service ref updated
+  useEffect(() => {
+    serviceRef.current = service;
+  }, [service]);
 
   // Focus input when modal opens
   useEffect(() => {
@@ -81,11 +91,19 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, service, onS
         // Perform both keyword and vector search
         const keywordResults = await searchMemories(query);
         
+        // Check for API key before vector search
+        const userHasApiKey = await hasApiKey();
+        if (!userHasApiKey && query.trim()) {
+          setShowApiKeyPrompt(true);
+        }
+        
         // Vector search for semantic similarity
         let vectorResults: Memory[] = [];
         try {
-          const embedding = await service.getEmbedding(query);
-          vectorResults = await vectorSearchMemories(embedding);
+          if (userHasApiKey) {
+            const embedding = await serviceRef.current.getEmbedding(query);
+            vectorResults = await vectorSearchMemories(embedding);
+          }
         } catch (err) {
           console.warn('Vector search failed, using keyword only:', err);
         }
@@ -109,7 +127,7 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, service, onS
     }, 300);
 
     return () => clearTimeout(timeout);
-  }, [query, service]);
+  }, [query]);
 
   if (!isOpen) return null;
 
@@ -236,6 +254,14 @@ const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, service, onS
           )}
         </div>
       </div>
+
+      {/* API Key Prompt */}
+      <ApiKeyPrompt
+        isOpen={showApiKeyPrompt}
+        onClose={() => setShowApiKeyPrompt(false)}
+        onNavigateToSettings={onNavigateToSettings}
+        message="API key not configured. Using keyword search only. Add your API key in Settings for semantic search."
+      />
     </div>
   );
 };

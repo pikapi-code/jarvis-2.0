@@ -1,13 +1,23 @@
 import React, { useState } from 'react';
-import { searchMemories, deleteMemory } from '../../services/db';
+import { searchMemories, deleteMemory } from '../../services/supabase-db';
 import { Memory } from '../../types';
 import { Search, Trash2, Hash, Database, Loader } from 'lucide-react';
+import Notification, { NotificationType } from '../Notification';
+import ConfirmModal from '../ConfirmModal';
 
 const MemorySearchView: React.FC = () => {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<Memory[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [hasSearched, setHasSearched] = useState(false);
+    const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        id: number | null;
+    }>({
+        isOpen: false,
+        id: null
+    });
 
     const handleSearch = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
@@ -25,11 +35,23 @@ const MemorySearchView: React.FC = () => {
         }
     };
 
-    const handleDelete = async (id: number) => {
-        if (confirm('Delete this memory permanently?')) {
-            await deleteMemory(id);
+    const handleDelete = (id: number) => {
+        setConfirmModal({ isOpen: true, id });
+    };
+
+    const confirmDelete = async () => {
+        if (confirmModal.id === null) return;
+        
+        try {
+            await deleteMemory(confirmModal.id);
             // Refresh results
             handleSearch();
+            setNotification({ message: 'Memory node deleted successfully', type: 'success' });
+        } catch (error) {
+            console.error('Failed to delete memory:', error);
+            setNotification({ message: 'Failed to delete memory node', type: 'error' });
+        } finally {
+            setConfirmModal({ isOpen: false, id: null });
         }
     };
 
@@ -111,6 +133,27 @@ const MemorySearchView: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Notification */}
+            {notification && (
+                <Notification
+                    message={notification.message}
+                    type={notification.type}
+                    onClose={() => setNotification(null)}
+                />
+            )}
+
+            {/* Confirmation Modal */}
+            <ConfirmModal
+                isOpen={confirmModal.isOpen}
+                title="Delete Memory"
+                message="Delete this memory permanently?"
+                confirmText="Delete"
+                cancelText="Cancel"
+                onConfirm={confirmDelete}
+                onCancel={() => setConfirmModal({ isOpen: false, id: null })}
+                type="danger"
+            />
         </div>
     );
 };

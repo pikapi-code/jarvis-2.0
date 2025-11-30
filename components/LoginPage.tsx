@@ -1,17 +1,24 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { Command, Lock, User, LogIn, AlertCircle } from 'lucide-react';
+import { Command, Lock, User, LogIn, AlertCircle, Mail, ArrowLeft } from 'lucide-react';
+import Notification, { NotificationType } from './Notification';
 
 const LoginPage: React.FC = () => {
-  const { login } = useAuth();
+  const { login, signUp, forgotPassword } = useAuth();
   const { theme, getThemeClasses } = useTheme();
   const themeClasses = getThemeClasses();
 
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
 
   // Get theme color values for ambient glows
   const getThemeColor = (opacity: number = 1) => {
@@ -71,14 +78,68 @@ const LoginPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const success = await login(username, password);
-      if (!success) {
-        setError('Invalid credentials. Please try again.');
+      const result = isSignUp
+        ? await signUp(email, password, username || undefined)
+        : await login(email, password);
+      
+      if (!result.success) {
+        // If user already exists during signup, show info notification
+        if (result.isExistingUser && isSignUp) {
+          setNotification({ 
+            message: 'An account with this email already exists. Please sign in instead.', 
+            type: 'info' 
+          });
+          setIsSignUp(false);
+        } else {
+          setError(result.error || (isSignUp ? 'Sign up failed. Please try again.' : 'Invalid credentials. Please try again.'));
+        }
+      } else {
+        // Success - show notification
+        if (result.isExistingUser) {
+          setNotification({ 
+            message: `Welcome back! You've successfully logged in.`, 
+            type: 'success' 
+          });
+        } else {
+          setNotification({ 
+            message: `Account created successfully! Please sign in to continue.`, 
+            type: 'success' 
+          });
+          // Switch to login mode after successful signup
+          setIsSignUp(false);
+          setEmail(email); // Keep email filled in
+          setPassword(''); // Clear password
+        }
       }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
+    } catch (err: any) {
+      setError(err.message || 'An error occurred. Please try again.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsSendingReset(true);
+
+    try {
+      const result = await forgotPassword(forgotPasswordEmail);
+      
+      if (result.success) {
+        setNotification({ 
+          message: 'Password reset email sent! Please check your inbox and follow the instructions.', 
+          type: 'success' 
+        });
+        setShowForgotPassword(false);
+        setForgotPasswordEmail('');
+      } else {
+        setError(result.error || 'Failed to send password reset email. Please try again.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setIsSendingReset(false);
     }
   };
 
@@ -124,38 +185,78 @@ const LoginPage: React.FC = () => {
           {/* Login Card */}
           <div className="glass-panel rounded-2xl p-8 border border-white/10 shadow-2xl">
             <div className="mb-6">
-              <h2 className="text-xl font-semibold text-white mb-2">System Access</h2>
-              <p className="text-sm text-slate-400">Enter your credentials to access the neural interface</p>
+              <h2 className="text-xl font-semibold text-white mb-2">
+                {isSignUp ? 'Create Account' : 'System Access'}
+              </h2>
+              <p className="text-sm text-slate-400">
+                {isSignUp ? 'Sign up to start using Jarvis' : 'Enter your credentials to access the neural interface'}
+              </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Username Field */}
+              {/* Email Field */}
               <div>
-                <label htmlFor="username" className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">
-                  Username
+                <label htmlFor="email" className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">
+                  Email
                 </label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
                     <User size={18} />
                   </div>
                   <input
-                    id="username"
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="w-full pl-11 pr-4 py-3 bg-space-900/50 border border-white/10 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-white/20 focus:ring-2 focus:ring-white/10 transition-all"
-                    placeholder="Enter username"
+                    placeholder="Enter email"
                     required
                     autoFocus
                   />
                 </div>
               </div>
 
+              {/* Username Field (only for sign up) */}
+              {isSignUp && (
+                <div>
+                  <label htmlFor="username" className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">
+                    Username (optional)
+                  </label>
+                  <div className="relative">
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      <User size={18} />
+                    </div>
+                    <input
+                      id="username"
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3 bg-space-900/50 border border-white/10 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-white/20 focus:ring-2 focus:ring-white/10 transition-all"
+                      placeholder="Enter username (optional)"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Password Field */}
               <div>
-                <label htmlFor="password" className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">
-                  Password
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label htmlFor="password" className="block text-xs font-medium text-slate-400 uppercase tracking-wider">
+                    Password
+                  </label>
+                  {!isSignUp && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowForgotPassword(true);
+                        setError('');
+                      }}
+                      className="text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
                     <Lock size={18} />
@@ -190,26 +291,127 @@ const LoginPage: React.FC = () => {
                 {isLoading ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Authenticating...</span>
+                    <span>{isSignUp ? 'Creating account...' : 'Authenticating...'}</span>
                   </>
                 ) : (
                   <>
                     <LogIn size={18} />
-                    <span>Access System</span>
+                    <span>{isSignUp ? 'Create Account' : 'Access System'}</span>
                   </>
                 )}
               </button>
             </form>
 
-            {/* Footer Note */}
-            <div className="mt-6 pt-6 border-t border-white/5 text-center">
-              <p className="text-xs text-slate-500 font-mono">
-                Neural interface protected
-              </p>
-            </div>
+            {/* Toggle Sign Up/Login */}
+            {!showForgotPassword && (
+              <div className="mt-6 pt-6 border-t border-white/5 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(!isSignUp);
+                    setError('');
+                  }}
+                  className="text-sm text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  {isSignUp ? (
+                    <>Already have an account? <span className="text-white font-medium">Sign in</span></>
+                  ) : (
+                    <>Don't have an account? <span className="text-white font-medium">Sign up</span></>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Forgot Password Card */}
+          {showForgotPassword && (
+            <div className="glass-panel rounded-2xl p-8 border border-white/10 shadow-2xl mt-4">
+              <div className="mb-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForgotPassword(false);
+                    setForgotPasswordEmail('');
+                    setError('');
+                  }}
+                  className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors mb-4"
+                >
+                  <ArrowLeft size={16} />
+                  Back to login
+                </button>
+                <h2 className="text-xl font-semibold text-white mb-2">
+                  Reset Password
+                </h2>
+                <p className="text-sm text-slate-400">
+                  Enter your email address and we'll send you a link to reset your password.
+                </p>
+              </div>
+
+              <form onSubmit={handleForgotPassword} className="space-y-5">
+                {/* Email Field */}
+                <div>
+                  <label htmlFor="forgot-email" className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">
+                    Email
+                  </label>
+                  <div className="relative">
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      <Mail size={18} />
+                    </div>
+                    <input
+                      id="forgot-email"
+                      type="email"
+                      value={forgotPasswordEmail}
+                      onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3 bg-space-900/50 border border-white/10 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-white/20 focus:ring-2 focus:ring-white/10 transition-all"
+                      placeholder="Enter your email"
+                      required
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {/* Error Message */}
+                {error && (
+                  <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+                    <AlertCircle size={16} />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={isSendingReset}
+                  className={`w-full ${themeClasses.button} py-3 rounded-lg font-medium transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed`}
+                  style={!isSendingReset ? { boxShadow: `0 0 20px ${getThemeColor(0.3)}` } : {}}
+                >
+                  {isSendingReset ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mail size={18} />
+                      <span>Send Reset Link</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Notification */}
+      {notification && (
+        <Notification
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+          duration={5000}
+        />
+      )}
     </div>
   );
 };

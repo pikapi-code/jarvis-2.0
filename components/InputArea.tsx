@@ -115,7 +115,7 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled }) => {
                 <Paperclip size={10} /> Upload
              </button>
              <button onClick={() => handleSend("What can you remember about me?")} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-[10px] text-slate-400 hover:bg-white/10 hover:text-white transition-colors">
-                <BrainCircuit size={10} /> Search Memory
+                <BrainCircuit size={10} /> What do you remember?
              </button>
           </div>
       )}

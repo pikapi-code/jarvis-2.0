@@ -1,11 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { getAllMemories, deleteMemory } from '../../services/db';
+import { getAllMemories, deleteMemory } from '../../services/supabase-db';
 import { Memory } from '../../types';
 import { Search, Trash2, Hash, BrainCircuit } from 'lucide-react';
+import Notification, { NotificationType } from '../Notification';
+import ConfirmModal from '../ConfirmModal';
 
 const MemoriesView: React.FC = () => {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [filter, setFilter] = useState('');
+  const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    id: number | null;
+  }>({
+    isOpen: false,
+    id: null
+  });
 
   useEffect(() => {
     loadMemories();
@@ -16,10 +26,22 @@ const MemoriesView: React.FC = () => {
     setMemories(data);
   };
 
-  const handleDelete = async (id: number) => {
-    if (confirm('Delete this memory permanently?')) {
-        await deleteMemory(id);
-        loadMemories();
+  const handleDelete = (id: number) => {
+    setConfirmModal({ isOpen: true, id });
+  };
+
+  const confirmDelete = async () => {
+    if (confirmModal.id === null) return;
+    
+    try {
+      await deleteMemory(confirmModal.id);
+      loadMemories();
+      setNotification({ message: 'Memory node deleted successfully', type: 'success' });
+    } catch (error) {
+      console.error('Failed to delete memory:', error);
+      setNotification({ message: 'Failed to delete memory node', type: 'error' });
+    } finally {
+      setConfirmModal({ isOpen: false, id: null });
     }
   };
 
@@ -90,6 +112,27 @@ const MemoriesView: React.FC = () => {
             </div>
         ))}
       </div>
+
+      {/* Notification */}
+      {notification && (
+        <Notification
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+        />
+      )}
+
+      {/* Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title="Delete Memory"
+        message="Delete this memory permanently?"
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmModal({ isOpen: false, id: null })}
+        type="danger"
+      />
     </div>
   );
 };

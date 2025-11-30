@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Mic, Radio, BookOpen, Check } from 'lucide-react';
-import { addMemory } from '../services/db';
+import { addMemory } from '../services/supabase-db';
 import { JarvisService } from '../services/gemini';
+import { hasApiKey } from '../services/api-client';
+import ApiKeyPrompt from './ApiKeyPrompt';
 
 interface VoiceDiaryModeProps {
     service: JarvisService;
     onDiaryAdded?: () => void;
+    onNavigateToSettings?: () => void;
 }
 
-const VoiceDiaryMode: React.FC<VoiceDiaryModeProps> = ({ service, onDiaryAdded }) => {
+const VoiceDiaryMode: React.FC<VoiceDiaryModeProps> = ({ service, onDiaryAdded, onNavigateToSettings }) => {
     const [isListening, setIsListening] = useState(false);
     const [transcript, setTranscript] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -16,6 +19,7 @@ const VoiceDiaryMode: React.FC<VoiceDiaryModeProps> = ({ service, onDiaryAdded }
     const [showSuccess, setShowSuccess] = useState(false);
     const recognitionRef = useRef<any>(null);
     const [error, setError] = useState<string | null>(null);
+    const [showApiKeyPrompt, setShowApiKeyPrompt] = useState(false);
 
     useEffect(() => {
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -68,8 +72,25 @@ const VoiceDiaryMode: React.FC<VoiceDiaryModeProps> = ({ service, onDiaryAdded }
             if (transcript.trim()) {
                 setIsSaving(true);
                 try {
+                    // Check for API key before getting embedding
+                    const userHasApiKey = await hasApiKey();
+                    if (!userHasApiKey) {
+                        setShowApiKeyPrompt(true);
+                    }
+
                     // Get embedding for the diary entry
-                    const embedding = await service.getEmbedding(transcript);
+                    let embedding: number[] | undefined;
+                    try {
+                        if (userHasApiKey) {
+                            embedding = await service.getEmbedding(transcript);
+                        }
+                        if (!embedding || embedding.length === 0) {
+                            console.warn('Failed to generate embedding for voice diary entry');
+                        }
+                    } catch (embedError) {
+                        console.error('Error generating embedding for voice diary entry:', embedError);
+                        // Continue without embedding - entry will still be saved
+                    }
 
                     // Save to diary
                     await addMemory(
@@ -216,6 +237,14 @@ const VoiceDiaryMode: React.FC<VoiceDiaryModeProps> = ({ service, onDiaryAdded }
                 </div>
 
             </div>
+
+            {/* API Key Prompt */}
+            <ApiKeyPrompt
+                isOpen={showApiKeyPrompt}
+                onClose={() => setShowApiKeyPrompt(false)}
+                onNavigateToSettings={onNavigateToSettings}
+                message="API key not configured. Entry will be saved without embedding. Add your API key in Settings for better search."
+            />
         </div>
     );
 };

@@ -15,11 +15,11 @@ import { Menu, X } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { useAuth } from './contexts/AuthContext';
 
-// Initialize service outside
-const jarvis = new JarvisService();
-
 const App: React.FC = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, username, loading } = useAuth();
+  
+  // Initialize service with username (if available)
+  const jarvis = new JarvisService(username || undefined);
   const { theme, getThemeClasses } = useTheme();
   const themeClasses = getThemeClasses();
   const [currentView, setCurrentView] = useState<ViewMode>('assistant');
@@ -108,11 +108,12 @@ const App: React.FC = () => {
             onSoundToggle={() => setSoundEnabled(prev => !prev)}
             conversationId={activeConversationId}
             onConversationChange={setActiveConversationId}
+            onNavigateToSettings={() => setCurrentView('settings')}
           />
         </div>
-        {currentView === 'diary' && <DiaryView service={jarvis} onMemoryUpdate={handleMemoryUpdate} />}
+        {currentView === 'diary' && <DiaryView service={jarvis} onMemoryUpdate={handleMemoryUpdate} onNavigateToSettings={() => setCurrentView('settings')} />}
         {currentView === 'memories' && <MemoriesView />}
-        {currentView === 'files' && <FilesView service={jarvis} onMemoryUpdate={handleMemoryUpdate} />}
+        {currentView === 'files' && <FilesView service={jarvis} onMemoryUpdate={handleMemoryUpdate} onNavigateToSettings={() => setCurrentView('settings')} />}
         {currentView === 'memory_search' && <MemorySearchView />}
         {currentView === 'history' && (
           <HistoryView
@@ -131,6 +132,18 @@ const App: React.FC = () => {
       </>
     );
   };
+
+  // Show loading state while checking authentication
+  if (loading) {
+    return (
+      <div className="flex h-screen bg-space-950 text-slate-200 font-sans items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 text-sm">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Show login page if not authenticated
   if (!isAuthenticated) {

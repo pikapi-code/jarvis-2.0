@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Memory } from '../types';
-import { getAllMemories, deleteMemory } from '../services/db';
+import { getAllMemories, deleteMemory } from '../services/supabase-db';
 import { Trash2, Database, Search, Hash } from 'lucide-react';
+import Notification, { NotificationType } from './Notification';
 
 interface MemoryPanelProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface MemoryPanelProps {
 const MemoryPanel: React.FC<MemoryPanelProps> = ({ isOpen, refreshTrigger }) => {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [filter, setFilter] = useState('');
+  const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
 
   useEffect(() => {
     loadMemories();
@@ -26,8 +28,14 @@ const MemoryPanel: React.FC<MemoryPanelProps> = ({ isOpen, refreshTrigger }) => 
   };
 
   const handleDelete = async (id: number) => {
-    await deleteMemory(id);
-    loadMemories();
+    try {
+      await deleteMemory(id);
+      loadMemories();
+      setNotification({ message: 'Memory node deleted successfully', type: 'success' });
+    } catch (error) {
+      console.error('Failed to delete memory:', error);
+      setNotification({ message: 'Failed to delete memory node', type: 'error' });
+    }
   };
 
   const filteredMemories = memories.filter(m => 
@@ -99,6 +107,15 @@ const MemoryPanel: React.FC<MemoryPanelProps> = ({ isOpen, refreshTrigger }) => 
           ))
         )}
       </div>
+
+      {/* Notification */}
+      {notification && (
+        <Notification
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+        />
+      )}
     </div>
   );
 };

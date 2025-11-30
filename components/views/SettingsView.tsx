@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { themes } from '../../config/themes';
-import { getAllMemories, deleteMemory, getConversations, deleteConversation } from '../../services/db';
+import { getAllMemories, deleteMemory, getConversations, deleteConversation } from '../../services/supabase-db';
+import { getAuthHeaders } from '../../services/api-client';
 import { Memory } from '../../types';
+import Notification, { NotificationType } from '../Notification';
+import ConfirmModal from '../ConfirmModal';
 import { 
   Settings, 
   Palette, 
@@ -30,12 +33,33 @@ interface SettingsViewProps {
 
 const SettingsView: React.FC<SettingsViewProps> = ({ soundEnabled, onSoundToggle }) => {
   const { currentTheme, setTheme, getThemeClasses } = useTheme();
-  const { username } = useAuth();
+  const { username, session } = useAuth();
   const themeClasses = getThemeClasses();
   const [storageInfo, setStorageInfo] = useState({ memories: 0, conversations: 0, totalSize: '0 KB' });
   const [isClearing, setIsClearing] = useState(false);
   const [clearType, setClearType] = useState<'memories' | 'conversations' | null>(null);
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: 'danger' | 'warning';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'danger'
+  });
+  
+  // API Key Management
+  const [apiKey, setApiKey] = useState('');
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [isCheckingApiKey, setIsCheckingApiKey] = useState(true);
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
 
   // Get theme color for glows (not used but kept for consistency)
   const getThemeColor = (opacity: number = 1) => {
@@ -56,6 +80,31 @@ const SettingsView: React.FC<SettingsViewProps> = ({ soundEnabled, onSoundToggle
     };
     return colorMap[currentTheme] || colorMap.indigo;
   };
+
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+  // Check if user has API key
+  useEffect(() => {
+    const checkApiKey = async () => {
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(`${API_BASE_URL}/api/api-keys`, {
+          method: 'GET',
+          headers,
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setHasApiKey(data.hasApiKey || false);
+        }
+      } catch (error) {
+        console.error('Failed to check API key:', error);
+      } finally {
+        setIsCheckingApiKey(false);
+      }
+    };
+    checkApiKey();
+  }, []);
 
   // Load storage info
   useEffect(() => {
@@ -84,48 +133,60 @@ const SettingsView: React.FC<SettingsViewProps> = ({ soundEnabled, onSoundToggle
     loadStorageInfo();
   }, []);
 
-  const handleClearMemories = async () => {
-    if (!confirm('Are you sure you want to delete ALL memories? This cannot be undone.')) {
-      return;
-    }
-    setIsClearing(true);
-    setClearType('memories');
-    try {
-      const memories = await getAllMemories();
-      for (const mem of memories) {
-        await deleteMemory(mem.id!);
+  const handleClearMemories = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete All Memories',
+      message: 'Are you sure you want to delete ALL memories? This action cannot be undone.',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setIsClearing(true);
+        setClearType('memories');
+        try {
+          const memories = await getAllMemories();
+          for (const mem of memories) {
+            await deleteMemory(mem.id!);
+          }
+          setStorageInfo(prev => ({ ...prev, memories: 0 }));
+          setNotification({ message: 'All memories have been deleted.', type: 'success' });
+        } catch (error) {
+          console.error('Failed to clear memories:', error);
+          setNotification({ message: 'Failed to clear memories.', type: 'error' });
+        } finally {
+          setIsClearing(false);
+          setClearType(null);
+        }
       }
-      setStorageInfo(prev => ({ ...prev, memories: 0 }));
-      alert('All memories have been deleted.');
-    } catch (error) {
-      console.error('Failed to clear memories:', error);
-      alert('Failed to clear memories.');
-    } finally {
-      setIsClearing(false);
-      setClearType(null);
-    }
+    });
   };
 
-  const handleClearConversations = async () => {
-    if (!confirm('Are you sure you want to delete ALL conversations? This cannot be undone.')) {
-      return;
-    }
-    setIsClearing(true);
-    setClearType('conversations');
-    try {
-      const conversations = await getConversations();
-      for (const conv of conversations) {
-        await deleteConversation(conv.id);
+  const handleClearConversations = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete All Conversations',
+      message: 'Are you sure you want to delete ALL conversations? This action cannot be undone.',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        setIsClearing(true);
+        setClearType('conversations');
+        try {
+          const conversations = await getConversations();
+          for (const conv of conversations) {
+            await deleteConversation(conv.id);
+          }
+          setStorageInfo(prev => ({ ...prev, conversations: 0 }));
+          setNotification({ message: 'All conversations have been deleted.', type: 'success' });
+        } catch (error) {
+          console.error('Failed to clear conversations:', error);
+          setNotification({ message: 'Failed to clear conversations.', type: 'error' });
+        } finally {
+          setIsClearing(false);
+          setClearType(null);
+        }
       }
-      setStorageInfo(prev => ({ ...prev, conversations: 0 }));
-      alert('All conversations have been deleted.');
-    } catch (error) {
-      console.error('Failed to clear conversations:', error);
-      alert('Failed to clear conversations.');
-    } finally {
-      setIsClearing(false);
-      setClearType(null);
-    }
+    });
   };
 
   const handleExportData = async () => {
@@ -149,7 +210,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ soundEnabled, onSoundToggle
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Failed to export data:', error);
-      alert('Failed to export data.');
+      setNotification({ message: 'Failed to export data.', type: 'error' });
     }
   };
 
@@ -165,10 +226,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({ soundEnabled, onSoundToggle
         const text = await file.text();
         const data = JSON.parse(text);
         // Note: In a real implementation, you'd want to import this data properly
-        alert('Import functionality requires additional implementation. Data structure validated.');
+        setNotification({ message: 'Import functionality requires additional implementation. Data structure validated.', type: 'info' });
         console.log('Import data:', data);
       } catch (error) {
-        alert('Failed to import data. Invalid file format.');
+        setNotification({ message: 'Failed to import data. Invalid file format.', type: 'error' });
       }
     };
     input.click();
@@ -267,20 +328,153 @@ const SettingsView: React.FC<SettingsViewProps> = ({ soundEnabled, onSoundToggle
         {/* API Configuration */}
         <SettingSection title="API Configuration" icon={<Key size={18} />}>
           <SettingItem
-            label="API Key"
-            description="Your Gemini API key (stored in environment)"
+            label="Gemini API Key"
+            description="Your personal API key for Gemini AI. Required to use the assistant."
           >
-            <div className="flex items-center gap-2">
-              <code className="text-xs px-2 py-1 bg-space-900 rounded text-slate-400">
-                {showApiKey ? (process.env.API_KEY || 'Not set') : '••••••••••••'}
-              </code>
-              <button
-                onClick={() => setShowApiKey(!showApiKey)}
-                className="text-xs text-slate-400 hover:text-slate-200 transition-colors"
-              >
-                {showApiKey ? 'Hide' : 'Show'}
-              </button>
-            </div>
+            {isCheckingApiKey ? (
+              <div className="text-xs text-slate-500">Checking...</div>
+            ) : hasApiKey && !showApiKeyInput ? (
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-emerald-400 flex items-center gap-1">
+                  <Check size={14} />
+                  Configured
+                </div>
+                <button
+                  onClick={() => setShowApiKeyInput(true)}
+                  className="text-xs px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-slate-300 transition-all"
+                >
+                  Update
+                </button>
+                <button
+                  onClick={async () => {
+                    setConfirmModal({
+                      isOpen: true,
+                      title: 'Delete API Key',
+                      message: 'Are you sure you want to delete your API key? You will need to add it again to use the assistant.',
+                      type: 'danger',
+                      onConfirm: async () => {
+                        setConfirmModal({ ...confirmModal, isOpen: false });
+                        try {
+                          const headers = await getAuthHeaders();
+                          const response = await fetch(`${API_BASE_URL}/api/api-keys`, {
+                            method: 'DELETE',
+                            headers,
+                          });
+                          if (response.ok) {
+                            setHasApiKey(false);
+                            setNotification({ message: 'API key deleted successfully.', type: 'success' });
+                          } else {
+                            const error = await response.json();
+                            // Check if authentication is required
+                            if (error.requiresAuth || response.status === 401) {
+                              throw new Error('Please log in to delete your API key. Authentication is required when Supabase is configured.');
+                            }
+                            throw new Error(error.error || 'Failed to delete API key');
+                          }
+                        } catch (error: any) {
+                          console.error('Failed to delete API key:', error);
+                          setNotification({ message: error.message || 'Failed to delete API key.', type: 'error' });
+                        }
+                      }
+                    });
+                  }}
+                  className="text-xs px-2 py-1 bg-red-500/10 hover:bg-red-500/20 rounded text-red-400 transition-all"
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 w-full max-w-md">
+                {showApiKeyInput && (
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="Enter your Gemini API key"
+                      className="flex-1 px-3 py-2 bg-space-900/50 border border-white/10 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:border-white/20"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!apiKeyInput.trim()) {
+                          setNotification({ message: 'Please enter an API key.', type: 'error' });
+                          return;
+                        }
+                        setIsSavingApiKey(true);
+                        try {
+                          // Use session from AuthContext if available
+                          const headers = await getAuthHeaders(session || undefined);
+                          const response = await fetch(`${API_BASE_URL}/api/api-keys`, {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
+                          });
+                          if (response.ok) {
+                            setHasApiKey(true);
+                            setApiKeyInput('');
+                            setShowApiKeyInput(false);
+                            setNotification({ message: 'API key validated and saved successfully. You may need to refresh the page or start a new conversation.', type: 'success' });
+                          } else {
+                            const error = await response.json();
+                            console.error('API key save error:', error);
+                            // Check if authentication is required
+                            if (error.requiresAuth || response.status === 401) {
+                              throw new Error('Your session may have expired. Please log out and log back in, then try again.');
+                            }
+                            throw new Error(error.error || 'Failed to save API key');
+                          }
+                        } catch (error: any) {
+                          console.error('Failed to save API key:', error);
+                          // Provide more helpful error messages
+                          let errorMessage = error.message || 'Failed to save API key.';
+                          if (error.message?.includes('session') || error.message?.includes('log in')) {
+                            errorMessage = error.message;
+                          } else if (error.message?.includes('No active session')) {
+                            errorMessage = 'Your session has expired. Please log out and log back in, then try again.';
+                          }
+                          setNotification({ message: errorMessage, type: 'error' });
+                        } finally {
+                          setIsSavingApiKey(false);
+                        }
+                      }}
+                      disabled={isSavingApiKey}
+                      className={`px-4 py-2 rounded-lg text-sm ${themeClasses.button} transition-all disabled:opacity-50`}
+                    >
+                      {isSavingApiKey ? 'Validating...' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowApiKeyInput(false);
+                        setApiKeyInput('');
+                      }}
+                      className="px-3 py-2 rounded-lg text-sm bg-white/5 hover:bg-white/10 text-slate-300 transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+                {!showApiKeyInput && (
+                  <button
+                    onClick={() => setShowApiKeyInput(true)}
+                    className={`px-3 py-1.5 rounded-lg text-xs ${themeClasses.button} transition-all`}
+                  >
+                    <Key size={14} className="inline mr-1.5" />
+                    Add API Key
+                  </button>
+                )}
+                <div className="text-xs text-slate-500 mt-1">
+                  Get your API key from{' '}
+                  <a 
+                    href="https://aistudio.google.com/app/apikey" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-emerald-400 hover:text-emerald-300 underline"
+                  >
+                    Google AI Studio
+                  </a>
+                </div>
+              </div>
+            )}
           </SettingItem>
           <SettingItem
             label="Model"
@@ -386,6 +580,27 @@ const SettingsView: React.FC<SettingsViewProps> = ({ soundEnabled, onSoundToggle
           </div>
         </SettingSection>
       </div>
+
+      {/* Notification */}
+      {notification && (
+        <Notification
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+        />
+      )}
+
+      {/* Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+        type={confirmModal.type}
+      />
     </div>
   );
 };

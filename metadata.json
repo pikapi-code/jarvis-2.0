@@ -1,7 +1,0 @@
-{
-  "name": "Jarvis Personal AI",
-  "description": "A persistent, multimodal personal AI assistant with long-term memory capabilities.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}

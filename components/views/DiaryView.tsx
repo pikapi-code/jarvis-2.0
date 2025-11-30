@@ -1,19 +1,35 @@
 import React, { useEffect, useState } from 'react';
-import { getAllMemories, deleteMemory, addMemory } from '../../services/db';
+import { getAllMemories, deleteMemory, addMemory } from '../../services/supabase-db';
 import { Memory } from '../../types';
-import { Calendar, Clock, Plus, Trash2, X } from 'lucide-react';
+import { Calendar, Clock, Plus, Trash2, X, Mic } from 'lucide-react';
 import { JarvisService } from '../../services/gemini';
+import VoiceDiaryMode from '../VoiceDiaryMode';
+import { hasApiKey } from '../../services/api-client';
+import ApiKeyPrompt from '../ApiKeyPrompt';
+import Notification, { NotificationType } from '../Notification';
+import ConfirmModal from '../ConfirmModal';
 
 interface DiaryViewProps {
     service: JarvisService;
     onMemoryUpdate: () => void;
+    onNavigateToSettings?: () => void;
 }
 
-const DiaryView: React.FC<DiaryViewProps> = ({ service, onMemoryUpdate }) => {
+const DiaryView: React.FC<DiaryViewProps> = ({ service, onMemoryUpdate, onNavigateToSettings }) => {
     const [entries, setEntries] = useState<Record<string, Memory[]>>({});
     const [showAddModal, setShowAddModal] = useState(false);
+    const [showVoiceMode, setShowVoiceMode] = useState(false);
     const [newLogText, setNewLogText] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [showApiKeyPrompt, setShowApiKeyPrompt] = useState(false);
+    const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        id: number | null;
+    }>({
+        isOpen: false,
+        id: null
+    });
 
     useEffect(() => {
         loadDiary();
@@ -37,7 +53,25 @@ const DiaryView: React.FC<DiaryViewProps> = ({ service, onMemoryUpdate }) => {
 
         setIsSaving(true);
         try {
-            const embedding = await service.getEmbedding(newLogText);
+            // Check for API key before getting embedding
+            const userHasApiKey = await hasApiKey();
+            if (!userHasApiKey) {
+                setShowApiKeyPrompt(true);
+            }
+
+            let embedding: number[] | undefined;
+            try {
+                if (userHasApiKey) {
+                    embedding = await service.getEmbedding(newLogText);
+                }
+                if (!embedding || embedding.length === 0) {
+                    console.warn('Failed to generate embedding for diary entry');
+                }
+            } catch (embedError) {
+                console.error('Error generating embedding for diary entry:', embedError);
+                // Continue without embedding - entry will still be saved
+            }
+            
             await addMemory(
                 newLogText,
                 'diary',
@@ -60,44 +94,60 @@ const DiaryView: React.FC<DiaryViewProps> = ({ service, onMemoryUpdate }) => {
         }
     };
 
-    const handleDeleteLog = async (id: number) => {
-        if (confirm('Are you sure you want to delete this log entry?')) {
-            try {
-                await deleteMemory(id);
-                onMemoryUpdate();
-                loadDiary();
-            } catch (error) {
-                console.error('Failed to delete log:', error);
-            }
+    const handleDeleteLog = (id: number) => {
+        setConfirmModal({ isOpen: true, id });
+    };
+
+    const confirmDelete = async () => {
+        if (confirmModal.id === null) return;
+        
+        try {
+            await deleteMemory(confirmModal.id);
+            onMemoryUpdate();
+            loadDiary();
+            setNotification({ message: 'Log entry deleted successfully', type: 'success' });
+        } catch (error) {
+            console.error('Failed to delete log:', error);
+            setNotification({ message: 'Failed to delete log entry', type: 'error' });
+        } finally {
+            setConfirmModal({ isOpen: false, id: null });
         }
     };
 
     return (
-        <div className="flex flex-col h-full p-6 md:p-10 overflow-y-auto custom-scrollbar relative">
-            <div className="flex items-center justify-center mb-10">
-                <div className="flex items-center gap-4 max-w-4xl w-full">
-                    <div className="flex items-center gap-4">
-                        <div className="p-4 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl text-white shadow-lg shadow-indigo-500/20">
-                            <Calendar size={28} />
-                        </div>
-                        <div>
-                            <h1 className="text-3xl font-bold text-white tracking-tight">Personal Logs</h1>
-                            <p className="text-slate-400 text-sm mt-1">Timeline of events, thoughts, and logs.</p>
-                        </div>
+        <div className="flex flex-col h-full p-6 md:p-8 overflow-y-auto custom-scrollbar relative">
+            <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-4">
+                    <div className="p-4 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl text-white shadow-lg shadow-indigo-500/20">
+                        <Calendar size={28} />
                     </div>
+                    <div>
+                        <h1 className="text-3xl font-bold text-white tracking-tight">Personal Logs</h1>
+                        <p className="text-slate-400 text-sm mt-1">Timeline of events, thoughts, and logs.</p>
+                    </div>
+                </div>
 
-                    {/* Add Log Button */}
+                {/* Add Log Buttons */}
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowVoiceMode(true)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-br from-red-500 to-pink-600 text-white shadow-lg shadow-red-500/30 hover:shadow-red-500/50 hover:scale-105 transition-all duration-200 font-medium text-sm"
+                        title="Voice Diary Mode"
+                    >
+                        <Mic size={16} />
+                        <span className="hidden md:inline">Voice Log</span>
+                    </button>
                     <button
                         onClick={() => setShowAddModal(true)}
-                        className="ml-auto flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:scale-105 transition-all duration-200 font-medium"
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:scale-105 transition-all duration-200 font-medium text-sm"
                     >
-                        <Plus size={20} />
+                        <Plus size={16} />
                         <span className="hidden md:inline">Add Log</span>
                     </button>
                 </div>
             </div>
 
-            <div className="space-y-12 max-w-4xl mx-auto">
+            <div className="space-y-8">
                 {Object.keys(entries).length === 0 ? (
                     <div className="glass-panel p-8 rounded-xl text-center">
                         <p className="text-slate-400">No entries found. Click "Add Log" to start logging.</p>
@@ -110,7 +160,7 @@ const DiaryView: React.FC<DiaryViewProps> = ({ service, onMemoryUpdate }) => {
                                 {date}
                             </h2>
                             <div className="space-y-4">
-                                {items.map(item => (
+                                {(items as Memory[]).map(item => (
                                     <div key={item.id} className="glass-card p-5 rounded-xl transition-all hover:bg-white/10 group relative">
                                         <div className="flex items-center justify-between mb-2">
                                             <div className="flex items-center gap-2 text-xs text-violet-400 font-mono opacity-80">
@@ -140,6 +190,36 @@ const DiaryView: React.FC<DiaryViewProps> = ({ service, onMemoryUpdate }) => {
                     ))
                 )}
             </div>
+
+            {/* Voice Diary Mode Modal */}
+            {showVoiceMode && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-space-900 rounded-2xl shadow-2xl w-full h-full max-w-4xl max-h-[90vh] border border-white/10 flex flex-col">
+                        <div className="flex items-center justify-between p-6 border-b border-white/10">
+                            <div>
+                                <h2 className="text-xl font-bold text-white">Voice Diary Mode</h2>
+                                <p className="text-sm text-slate-400 mt-1">Speak your diary entry - it will be saved automatically</p>
+                            </div>
+                            <button
+                                onClick={() => setShowVoiceMode(false)}
+                                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                            <VoiceDiaryMode 
+                                service={service}
+                                onDiaryAdded={() => {
+                                    onMemoryUpdate();
+                                    loadDiary();
+                                }}
+                                onNavigateToSettings={onNavigateToSettings}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Add Log Modal */}
             {showAddModal && (
@@ -181,6 +261,35 @@ const DiaryView: React.FC<DiaryViewProps> = ({ service, onMemoryUpdate }) => {
                     </div>
                 </div>
             )}
+
+            {/* API Key Prompt */}
+            <ApiKeyPrompt
+                isOpen={showApiKeyPrompt}
+                onClose={() => setShowApiKeyPrompt(false)}
+                onNavigateToSettings={onNavigateToSettings}
+                message="API key not configured. Entry will be saved without embedding. Add your API key in Settings for better search."
+            />
+
+            {/* Notification */}
+            {notification && (
+                <Notification
+                    message={notification.message}
+                    type={notification.type}
+                    onClose={() => setNotification(null)}
+                />
+            )}
+
+            {/* Confirmation Modal */}
+            <ConfirmModal
+                isOpen={confirmModal.isOpen}
+                title="Delete Log Entry"
+                message="Are you sure you want to delete this log entry?"
+                confirmText="Delete"
+                cancelText="Cancel"
+                onConfirm={confirmDelete}
+                onCancel={() => setConfirmModal({ isOpen: false, id: null })}
+                type="danger"
+            />
         </div>
     );
 };

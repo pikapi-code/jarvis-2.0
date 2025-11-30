@@ -10,9 +10,10 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
       },
       plugins: [react()],
+      // REMOVED: API key is no longer exposed to frontend
+      // API key is now only used on the backend server
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        // Only define API URL for frontend
       },
       resolve: {
         alias: {

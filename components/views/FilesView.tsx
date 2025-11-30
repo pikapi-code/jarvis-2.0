@@ -1,18 +1,35 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { getAllMemories, deleteMemory, addMemory } from '../../services/db';
+import { getAllMemories, deleteMemory, addMemory } from '../../services/supabase-db';
 import { Memory, MemoryType } from '../../types';
 import { FileText, Image as ImageIcon, Mic, Download, Folder, Upload, Trash2, X } from 'lucide-react';
 import { JarvisService } from '../../services/gemini';
+import { extractAndChunkFile } from '../../services/fileExtraction';
+import { hasApiKey } from '../../services/api-client';
+import ApiKeyPrompt from '../ApiKeyPrompt';
+import Notification, { NotificationType } from '../Notification';
+import ConfirmModal from '../ConfirmModal';
 
 interface FilesViewProps {
     service: JarvisService;
     onMemoryUpdate: () => void;
+    onNavigateToSettings?: () => void;
 }
 
-const FilesView: React.FC<FilesViewProps> = ({ service, onMemoryUpdate }) => {
+const FilesView: React.FC<FilesViewProps> = ({ service, onMemoryUpdate, onNavigateToSettings }) => {
     const [files, setFiles] = useState<Memory[]>([]);
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [showApiKeyPrompt, setShowApiKeyPrompt] = useState(false);
+    const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        id: number | null;
+        fileName: string;
+    }>({
+        isOpen: false,
+        id: null,
+        fileName: ''
+    });
 
     useEffect(() => {
         loadFiles();
@@ -35,10 +52,21 @@ const FilesView: React.FC<FilesViewProps> = ({ service, onMemoryUpdate }) => {
         const selectedFiles = e.target.files;
         if (!selectedFiles || selectedFiles.length === 0) return;
 
+        // Check for API key before processing files
+        const userHasApiKey = await hasApiKey();
+        if (!userHasApiKey) {
+            setShowApiKeyPrompt(true);
+            // Reset file input and return early - don't save files without API key
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+            return;
+        }
+
         setIsUploading(true);
 
         try {
-            for (const file of Array.from(selectedFiles)) {
+            for (const file of Array.from(selectedFiles) as File[]) {
                 // Read file as base64
                 const base64Data = await new Promise<string>((resolve) => {
                     const reader = new FileReader();
@@ -57,23 +85,140 @@ const FilesView: React.FC<FilesViewProps> = ({ service, onMemoryUpdate }) => {
                     memoryType = 'audio';
                 }
 
-                // Create content description for embedding
-                const content = `File: ${file.name} (${file.type})`;
+                // Save the file itself as a memory entry so it appears in the Files tab
+                // This is separate from the text chunks that will be extracted
+                let fileEmbedding: number[] | undefined;
+                try {
+                    const fileDescription = `File: ${file.name} (${file.type})`;
+                    fileEmbedding = await service.getEmbedding(fileDescription);
+                } catch (error) {
+                    console.warn(`Failed to generate embedding for file ${file.name}:`, error);
+                }
 
-                // Get embedding
-                const embedding = await service.getEmbedding(content);
-
-                // Save to database
                 await addMemory(
-                    content,
-                    'files',
-                    ['uploaded'],
+                    `Uploaded file: ${file.name}`,
+                    'general',
+                    ['uploaded', 'file', memoryType],
                     memoryType,
                     base64Data,
                     file.type,
                     file.name,
-                    embedding
+                    fileEmbedding
                 );
+
+                // Extract and chunk file content
+                let extractedContent = null;
+                try {
+                    console.log(`[File Upload] Attempting to extract content from ${file.name} (${file.type})...`);
+                    extractedContent = await extractAndChunkFile(file, base64Data);
+                    if (extractedContent && extractedContent.text) {
+                        console.log(`✅ Extracted ${extractedContent.text.length} characters from ${file.name}`);
+                        console.log(`✅ Split into ${extractedContent.chunks.length} chunks`);
+                    } else {
+                        console.log(`ℹ️ No text content extracted from ${file.name} (may be binary file or unsupported format)`);
+                    }
+                } catch (extractError: any) {
+                    console.error(`❌ Error extracting text content from ${file.name}:`, extractError);
+                    console.error(`Error details:`, {
+                        message: extractError?.message,
+                        stack: extractError?.stack,
+                        name: extractError?.name
+                    });
+                    // Skip this file if we can't extract content
+                    continue;
+                }
+
+                // Verify API key is still available before processing
+                const stillHasApiKey = await hasApiKey();
+                if (!stillHasApiKey) {
+                    console.warn(`⚠️ API key no longer available, skipping file: ${file.name}`);
+                    setShowApiKeyPrompt(true);
+                    continue;
+                }
+
+                // If we extracted content, process and save each chunk with LLM summarization
+                if (extractedContent && extractedContent.chunks.length > 0) {
+                    console.log(`Processing ${extractedContent.chunks.length} content chunks for ${file.name} with LLM...`);
+
+                    for (let i = 0; i < extractedContent.chunks.length; i++) {
+                        const chunk = extractedContent.chunks[i];
+
+                        // Process chunk with LLM for summarization, categorization, and tagging
+                        let processedChunk: { summary: string; category: string; tags: string[] };
+                        try {
+                            processedChunk = await service.processChunk(
+                                chunk,
+                                file.name,
+                                i,
+                                extractedContent.chunks.length
+                            );
+                            console.log(`✅ Chunk ${i + 1}/${extractedContent.chunks.length} processed: category="${processedChunk.category}", summary: "${processedChunk.summary.substring(0, 100)}..."`);
+                        } catch (error: any) {
+                            console.error(`Error processing chunk ${i + 1} of ${file.name}:`, error);
+                            // If processing fails due to API key issues, skip this file
+                            if (error.message?.includes('API key') || error.message?.includes('No API key')) {
+                                console.warn(`⚠️ API key issue detected, skipping remaining chunks for ${file.name}`);
+                                setShowApiKeyPrompt(true);
+                                break;
+                            }
+                            // Fallback to original chunk if processing fails for other reasons
+                            processedChunk = {
+                                summary: chunk,
+                                category: 'general',
+                                tags: ['uploaded', 'file-content', `chunk-${i + 1}`]
+                            };
+                        }
+
+                        // Create content with file reference - save FULL chunk content, not just summary
+                        // Include summary as metadata at the beginning, but preserve all original data
+                        const chunkContent = `From "${file.name}" (section ${i + 1}/${extractedContent.chunks.length}):\n\nSummary: ${processedChunk.summary}\n\n--- Full Content ---\n\n${chunk}`;
+
+                        // Combine LLM-generated tags with file metadata tags
+                        const tags = [
+                            'uploaded',
+                            'file-content',
+                            ...processedChunk.tags.filter(t => t !== 'uploaded' && t !== 'file-content')
+                        ];
+
+                        let chunkEmbedding: number[] | undefined;
+                        try {
+                            // Generate embedding from the full chunk content for better searchability
+                            chunkEmbedding = await service.getEmbedding(chunk);
+                            if (!chunkEmbedding || chunkEmbedding.length === 0) {
+                                console.warn(`Failed to generate embedding for chunk ${i + 1} of ${file.name}`);
+                                // If embedding fails due to API key issues, skip this file
+                                throw new Error('Embedding generation failed');
+                            }
+                        } catch (error: any) {
+                            console.error(`Error generating embedding for chunk ${i + 1} of ${file.name}:`, error);
+                            // If embedding fails due to API key issues, skip this file
+                            if (error.message?.includes('API key') || error.message?.includes('No API key')) {
+                                console.warn(`⚠️ API key issue detected, skipping remaining chunks for ${file.name}`);
+                                setShowApiKeyPrompt(true);
+                                break;
+                            }
+                            // For other errors, skip this chunk but continue with others
+                            console.warn(`Skipping chunk ${i + 1} due to embedding error`);
+                            continue;
+                        }
+
+                        // Save processed chunk as a memory entry with the determined category
+                        await addMemory(
+                            chunkContent,
+                            processedChunk.category, // Use the category determined from content analysis
+                            tags,
+                            'text',
+                            undefined, // Don't store the chunk text as media data
+                            undefined,
+                            `${file.name} (section ${i + 1})`,
+                            chunkEmbedding
+                        );
+                    }
+
+                    console.log(`✅ Successfully processed and saved ${extractedContent.chunks.length} content chunks for ${file.name}`);
+                } else {
+                    console.log(`ℹ️ No text content extracted from ${file.name} (may be binary file or unsupported format)`);
+                }
             }
 
             // Refresh files list
@@ -90,16 +235,23 @@ const FilesView: React.FC<FilesViewProps> = ({ service, onMemoryUpdate }) => {
         }
     };
 
-    const handleDeleteFile = async (id: number, fileName: string) => {
-        if (confirm(`Are you sure you want to delete "${fileName}"?`)) {
-            try {
-                await deleteMemory(id);
-                await loadFiles();
-                onMemoryUpdate();
-            } catch (error) {
-                console.error('Failed to delete file:', error);
-                alert('Failed to delete file. Please try again.');
-            }
+    const handleDeleteFile = (id: number, fileName: string) => {
+        setConfirmModal({ isOpen: true, id, fileName });
+    };
+
+    const confirmDelete = async () => {
+        if (confirmModal.id === null) return;
+        
+        try {
+            await deleteMemory(confirmModal.id);
+            await loadFiles();
+            onMemoryUpdate();
+            setNotification({ message: 'File deleted successfully', type: 'success' });
+        } catch (error) {
+            console.error('Failed to delete file:', error);
+            setNotification({ message: 'Failed to delete file', type: 'error' });
+        } finally {
+            setConfirmModal({ isOpen: false, id: null, fileName: '' });
         }
     };
 
@@ -121,9 +273,9 @@ const FilesView: React.FC<FilesViewProps> = ({ service, onMemoryUpdate }) => {
                     <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isUploading}
-                        className="ml-auto flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:scale-105 transition-all duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="ml-auto flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:scale-105 transition-all duration-200 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        <Upload size={20} />
+                        <Upload size={16} />
                         <span className="hidden md:inline">{isUploading ? 'Uploading...' : 'Upload Files'}</span>
                     </button>
                     <input
@@ -180,6 +332,35 @@ const FilesView: React.FC<FilesViewProps> = ({ service, onMemoryUpdate }) => {
                     </div>
                 )}
             </div>
+
+            {/* API Key Prompt */}
+            <ApiKeyPrompt
+                isOpen={showApiKeyPrompt}
+                onClose={() => setShowApiKeyPrompt(false)}
+                onNavigateToSettings={onNavigateToSettings}
+                message="API key not configured. Files will be saved without embeddings and processing. Add your API key in Settings."
+            />
+
+            {/* Notification */}
+            {notification && (
+                <Notification
+                    message={notification.message}
+                    type={notification.type}
+                    onClose={() => setNotification(null)}
+                />
+            )}
+
+            {/* Confirmation Modal */}
+            <ConfirmModal
+                isOpen={confirmModal.isOpen}
+                title="Delete File"
+                message={`Are you sure you want to delete "${confirmModal.fileName}"?`}
+                confirmText="Delete"
+                cancelText="Cancel"
+                onConfirm={confirmDelete}
+                onCancel={() => setConfirmModal({ isOpen: false, id: null, fileName: '' })}
+                type="danger"
+            />
         </div>
     );
 };

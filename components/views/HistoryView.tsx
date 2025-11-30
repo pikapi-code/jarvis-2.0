@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { getConversations, deleteConversation } from '../../services/db';
+import { getConversations, deleteConversation } from '../../services/supabase-db';
 import { Conversation } from '../../types';
+import Notification, { NotificationType } from '../Notification';
+import ConfirmModal from '../ConfirmModal';
 import { MessageSquare, Trash2, Clock, ArrowRight } from 'lucide-react';
 
 interface HistoryViewProps {
@@ -10,6 +12,14 @@ interface HistoryViewProps {
 const HistoryView: React.FC<HistoryViewProps> = ({ onSelectConversation }) => {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [loading, setLoading] = useState(true);
+    const [notification, setNotification] = useState<{ message: string; type: NotificationType } | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{
+        isOpen: boolean;
+        conversationId: string | null;
+    }>({
+        isOpen: false,
+        conversationId: null
+    });
 
     const loadConversations = async () => {
         try {
@@ -26,11 +36,26 @@ const HistoryView: React.FC<HistoryViewProps> = ({ onSelectConversation }) => {
         loadConversations();
     }, []);
 
-    const handleDelete = async (e: React.MouseEvent, id: string) => {
+    const handleDelete = (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
-        if (confirm('Are you sure you want to delete this conversation?')) {
-            await deleteConversation(id);
+        setConfirmModal({
+            isOpen: true,
+            conversationId: id
+        });
+    };
+
+    const confirmDelete = async () => {
+        if (!confirmModal.conversationId) return;
+        
+        try {
+            await deleteConversation(confirmModal.conversationId);
             loadConversations();
+            setNotification({ message: 'Conversation deleted successfully.', type: 'success' });
+        } catch (error) {
+            console.error('Failed to delete conversation:', error);
+            setNotification({ message: 'Failed to delete conversation.', type: 'error' });
+        } finally {
+            setConfirmModal({ isOpen: false, conversationId: null });
         }
     };
 
@@ -97,6 +122,27 @@ const HistoryView: React.FC<HistoryViewProps> = ({ onSelectConversation }) => {
                     </div>
                 )}
             </div>
+
+            {/* Notification */}
+            {notification && (
+                <Notification
+                    message={notification.message}
+                    type={notification.type}
+                    onClose={() => setNotification(null)}
+                />
+            )}
+
+            {/* Confirmation Modal */}
+            <ConfirmModal
+                isOpen={confirmModal.isOpen}
+                title="Delete Conversation"
+                message="Are you sure you want to delete this conversation? This action cannot be undone."
+                confirmText="Delete"
+                cancelText="Cancel"
+                onConfirm={confirmDelete}
+                onCancel={() => setConfirmModal({ isOpen: false, conversationId: null })}
+                type="danger"
+            />
         </div>
     );
 };

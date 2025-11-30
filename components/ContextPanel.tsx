@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Memory } from '../types';
-import { getAllMemories } from '../services/db';
+import { getAllMemories } from '../services/supabase-db';
 import { Database, Clock, Sparkles, Activity, Layers, ChevronRight, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 
